@@ -17,10 +17,30 @@
 //! This module contains the foundational parts of an ASN.1 DER parser.
 
 use untrusted;
-use error;
 
 pub const CONSTRUCTED: u8 = 1 << 5;
 pub const CONTEXT_SPECIFIC: u8 = 2 << 6;
+
+pub enum Error {
+    LeadingZero,
+    LessThanMinimum,
+    LongLengthNotSupported,
+    HighTagNumberForm,
+    NegativeValue,
+    NonCanonical,
+    NonZeroUnusedBits,
+    Read,
+    UnexpectedEnd,
+    WrongTag,
+}
+
+impl From<untrusted::EndOfInput> for Error {
+    fn from(_: untrusted::EndOfInput) -> Error {
+        Error::UnexpectedEnd
+    }
+}
+
+pub type Result<T> = ::std::result::Result<T, Error>;
 
 #[derive(Clone, Copy, PartialEq)]
 #[repr(u8)]
@@ -34,7 +54,6 @@ pub enum Tag {
     Sequence = CONSTRUCTED | 0x10, // 0x30
     UTCTime = 0x17,
     GeneralizedTime = 0x18,
-
     ContextSpecificConstructed0 = CONTEXT_SPECIFIC | CONSTRUCTED | 0,
     ContextSpecificConstructed1 = CONTEXT_SPECIFIC | CONSTRUCTED | 1,
     ContextSpecificConstructed3 = CONTEXT_SPECIFIC | CONSTRUCTED | 3,
@@ -42,21 +61,19 @@ pub enum Tag {
 
 pub fn expect_tag_and_get_value<'a>(input: &mut untrusted::Reader<'a>,
                                     tag: Tag)
-                                    -> Result<untrusted::Input<'a>,
-                                              error::Unspecified> {
+                                    -> Result<untrusted::Input<'a>,> {
     let (actual_tag, inner) = read_tag_and_get_value(input)?;
     if (tag as usize) != (actual_tag as usize) {
-        return Err(error::Unspecified);
+        return Err(Error::WrongTag)
     }
     Ok(inner)
 }
 
 pub fn read_tag_and_get_value<'a>(input: &mut untrusted::Reader<'a>)
-                                  -> Result<(u8, untrusted::Input<'a>),
-                                            error::Unspecified> {
+                                  -> Result<(u8, untrusted::Input<'a>)> {
     let tag = input.read_byte()?;
     if (tag & 0x1F) == 0x1F {
-        return Err(error::Unspecified); // High tag number form is not allowed.
+        return Err(Error::HighTagNumberForm)
     }
 
     // If the high order bit of the first byte is set to zero then the length
@@ -67,7 +84,7 @@ pub fn read_tag_and_get_value<'a>(input: &mut untrusted::Reader<'a>)
         0x81 => {
             let second_byte = input.read_byte()?;
             if second_byte < 128 {
-                return Err(error::Unspecified); // Not the canonical encoding.
+                return Err(Error::NonCanonical)
             }
             second_byte as usize
         },
@@ -76,12 +93,12 @@ pub fn read_tag_and_get_value<'a>(input: &mut untrusted::Reader<'a>)
             let third_byte = input.read_byte()? as usize;
             let combined = (second_byte << 8) | third_byte;
             if combined < 256 {
-                return Err(error::Unspecified); // Not the canonical encoding.
+                return Err(Error::NonCanonical)
             }
             combined
         },
         _ => {
-            return Err(error::Unspecified); // We don't support longer lengths.
+            return Err(Error::LongLengthNotSupported)
         },
     };
 
@@ -90,12 +107,12 @@ pub fn read_tag_and_get_value<'a>(input: &mut untrusted::Reader<'a>)
 }
 
 pub fn bit_string_with_no_unused_bits<'a>(input: &mut untrusted::Reader<'a>)
-        -> Result<untrusted::Input<'a>, error::Unspecified> {
-    nested(input, Tag::BitString, error::Unspecified, |value| {
+        -> Result<untrusted::Input<'a>> {
+    nested(input, Tag::BitString, |value| {
         let unused_bits_at_end =
-            value.read_byte().map_err(|_| error::Unspecified)?;
+            value.read_byte()?;
         if unused_bits_at_end != 0 {
-            return Err(error::Unspecified);
+            return Err(Error::NonZeroUnusedBits)
         }
         Ok(value.skip_to_end())
     })
@@ -103,24 +120,24 @@ pub fn bit_string_with_no_unused_bits<'a>(input: &mut untrusted::Reader<'a>)
 
 // TODO: investigate taking decoder as a reference to reduce generated code
 // size.
-pub fn nested<'a, F, R, E: Copy>(input: &mut untrusted::Reader<'a>, tag: Tag,
-                                 error: E, decoder: F) -> Result<R, E>
+pub fn nested<'a, F, R>(input: &mut untrusted::Reader<'a>, tag: Tag,
+                                 decoder: F) -> Result<R>
                                  where F : FnOnce(&mut untrusted::Reader<'a>)
-                                                  -> Result<R, E> {
-    let inner = expect_tag_and_get_value(input, tag).map_err(|_| error)?;
-    inner.read_all(error, decoder)
+                                                  -> Result<R> {
+    let inner = expect_tag_and_get_value(input, tag)?;
+    inner.read_all(Error::Read, decoder)
 }
 
 fn nonnegative_integer<'a>(input: &mut untrusted::Reader<'a>, min_value: u8)
-                           -> Result<untrusted::Input<'a>, error::Unspecified> {
+                           -> Result<untrusted::Input<'a>> {
     // Verify that |input|, which has had any leading zero stripped off, is the
     // encoding of a value of at least |min_value|.
     fn check_minimum(input: untrusted::Input, min_value: u8)
-                     -> Result<(), error::Unspecified> {
-        input.read_all(error::Unspecified, |input| {
+                     -> Result<()> {
+        input.read_all(Error::Read, |input| {
             let first_byte = input.read_byte()?;
             if input.at_end() && first_byte < min_value {
-                return Err(error::Unspecified);
+                return Err(Error::LessThanMinimum)
             }
             let _ = input.skip_to_end();
             Ok(())
@@ -129,7 +146,7 @@ fn nonnegative_integer<'a>(input: &mut untrusted::Reader<'a>, min_value: u8)
 
     let value = expect_tag_and_get_value(input, Tag::Integer)?;
 
-    value.read_all(error::Unspecified, |input| {
+    value.read_all(Error::Read, |input| {
         // Empty encodings are not allowed.
         let first_byte = input.read_byte()?;
 
@@ -137,18 +154,18 @@ fn nonnegative_integer<'a>(input: &mut untrusted::Reader<'a>, min_value: u8)
             if input.at_end() {
                 // |value| is the legal encoding of zero.
                 if min_value > 0 {
-                    return Err(error::Unspecified);
+                    return Err(Error::LessThanMinimum)
                 }
                 return Ok(value);
             }
 
             let r = input.skip_to_end();
-            r.read_all(error::Unspecified, |input| {
+            r.read_all(Error::Read, |input| {
                 let second_byte = input.read_byte()?;
                 if (second_byte & 0x80) == 0 {
                     // A leading zero is only allowed when the value's high bit
                     // is set.
-                    return Err(error::Unspecified);
+                    return Err(Error::LeadingZero)
                 }
                 let _ = input.skip_to_end();
                 Ok(())
@@ -159,7 +176,7 @@ fn nonnegative_integer<'a>(input: &mut untrusted::Reader<'a>, min_value: u8)
 
         // Negative values are not allowed.
         if (first_byte & 0x80) != 0 {
-            return Err(error::Unspecified);
+            return Err(Error::NegativeValue)
         }
 
         let _ = input.skip_to_end();
@@ -172,9 +189,9 @@ fn nonnegative_integer<'a>(input: &mut untrusted::Reader<'a>, min_value: u8)
 /// numeric value. This is typically used for parsing version numbers.
 #[inline]
 pub fn small_nonnegative_integer(input: &mut untrusted::Reader)
-                                 -> Result<u8, error::Unspecified> {
+                                 -> Result<u8> {
     let value = nonnegative_integer(input, 0)?;
-    value.read_all(error::Unspecified, |input| {
+    value.read_all(Error::Read, |input| {
         let r = input.read_byte()?;
         Ok(r)
     })
@@ -184,28 +201,27 @@ pub fn small_nonnegative_integer(input: &mut untrusted::Reader)
 /// any leading zero byte.
 #[inline]
 pub fn positive_integer<'a>(input: &mut untrusted::Reader<'a>)
-                            -> Result<untrusted::Input<'a>, error::Unspecified> {
+                            -> Result<untrusted::Input<'a>> {
     nonnegative_integer(input, 1)
 }
 
 
 #[cfg(test)]
 mod tests {
-    use error;
     use super::*;
     use untrusted;
 
     fn with_good_i<F, R>(value: &[u8], f: F)
                          where F: FnOnce(&mut untrusted::Reader)
-                                         -> Result<R, error::Unspecified> {
-        let r = untrusted::Input::from(value).read_all(error::Unspecified, f);
+                                         -> Result<R> {
+        let r = untrusted::Input::from(value).read_all(Error::Read, f);
         assert!(r.is_ok());
     }
 
     fn with_bad_i<F, R>(value: &[u8], f: F)
                         where F: FnOnce(&mut untrusted::Reader)
-                                        -> Result<R, error::Unspecified> {
-        let r = untrusted::Input::from(value).read_all(error::Unspecified, f);
+                                        -> Result<R> {
+        let r = untrusted::Input::from(value).read_all(Error::Read, f);
         assert!(r.is_err());
     }
 
