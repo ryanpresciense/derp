@@ -18,29 +18,10 @@
 
 use untrusted;
 
-pub const CONSTRUCTED: u8 = 1 << 5;
-pub const CONTEXT_SPECIFIC: u8 = 2 << 6;
+use {Error, Result};
 
-pub enum Error {
-    LeadingZero,
-    LessThanMinimum,
-    LongLengthNotSupported,
-    HighTagNumberForm,
-    NegativeValue,
-    NonCanonical,
-    NonZeroUnusedBits,
-    Read,
-    UnexpectedEnd,
-    WrongTag,
-}
-
-impl From<untrusted::EndOfInput> for Error {
-    fn from(_: untrusted::EndOfInput) -> Error {
-        Error::UnexpectedEnd
-    }
-}
-
-pub type Result<T> = ::std::result::Result<T, Error>;
+const CONSTRUCTED: u8 = 1 << 5;
+const CONTEXT_SPECIFIC: u8 = 2 << 6;
 
 #[derive(Clone, Copy, PartialEq)]
 #[repr(u8)]
