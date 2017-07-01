@@ -1,0 +1,7 @@
+[package]
+name = "derp"
+version = "0.1.0"
+authors = ["heartsucker <heartsucker@autistici.org>"]
+
+[dependencies]
+untrusted = "0.5"
