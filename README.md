@@ -2,6 +2,11 @@
 
 `derp` is DER Parser.
 
+## Credit
+
+A significant portion of `derp` was pulled from the crypto library `ring` by @briansmith.
+If you like this lib, thank him.
+
 ## License
 
 This work is dual licensed under the MIT and Apache-2.0 licenses.
