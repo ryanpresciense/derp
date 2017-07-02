@@ -76,6 +76,7 @@ pub enum Error {
     UnexpectedEnd,
     UnknownTag,
     WrongTag,
+    WrongValue,
 }
 
 impl From<untrusted::EndOfInput> for Error {
