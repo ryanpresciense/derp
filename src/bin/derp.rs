@@ -5,27 +5,10 @@ extern crate pem;
 extern crate untrusted;
 
 use clap::{App, Arg, ArgMatches};
-use derp::{Error, Tag};
+use derp::{Result, Error, Tag};
 use std::fs::File;
-use std::io::{self, Read};
+use std::io::Read;
 use untrusted::{Input, Reader};
-
-#[derive(Debug)]
-struct CliError(String);
-
-impl From<Error> for CliError {
-    fn from(err: Error) -> CliError {
-        CliError(format!("{:?}", err))
-    }
-}
-
-impl From<io::Error> for CliError {
-    fn from(err: io::Error) -> CliError {
-        CliError(format!("{:?}", err))
-    }
-}
-
-type Result<T> = ::std::result::Result<T, CliError>;
 
 fn main() {
     let matches = parser().get_matches();
@@ -35,7 +18,7 @@ fn main() {
             std::process::exit(0)
         }
         Err(e) => {
-            println!("{:?}", e);
+            println!("Error: {:?}", e);
             std::process::exit(1);
         }
     }
@@ -47,7 +30,7 @@ fn run_main(matches: ArgMatches) -> Result<String> {
     file.read_to_end(&mut buf)?;
     let buf = parse_to_bytes(&buf);
     let input = Input::from(&buf);
-    Ok(input.read_all(derp::Error::Read, make_printable_string)?)
+    Ok(input.read_all(Error::Read, make_printable_string)?)
 }
 
 fn parser<'a, 'b>() -> App<'a, 'b> {
@@ -73,13 +56,13 @@ fn parse_to_bytes(bytes: &[u8]) -> Vec<u8> {
         .unwrap_or_else(|_| bytes.to_vec())
 }
 
-fn make_printable_string<'a>(input: &mut Reader<'a>) -> ::std::result::Result<String, derp::Error> {
+fn make_printable_string<'a>(input: &mut Reader<'a>) -> Result<String> {
     if input.at_end() {
         return Ok("".into())
     }
 
     if input.peek(Tag::Sequence as u8) {
-        let out = derp::nested(input, Tag::Sequence, make_printable_string).expect("shit")
+        let out = derp::nested(input, Tag::Sequence, make_printable_string)?
             .lines()
             .map(|l| format!("  {}\n", l))
             .collect::<String>();
@@ -103,6 +86,6 @@ mod test {
     fn parse_ed25519_pk8() {
         let input = parse_to_bytes(ED25519_PK8);
         let input = Input::from(&input);
-        input.read_all(derp::Error::Read, make_printable_string).unwrap();
+        input.read_all(Error::Read, make_printable_string).unwrap();
     }
 }
