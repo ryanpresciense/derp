@@ -16,44 +16,98 @@
 //!
 //! This module contains the foundational parts of an ASN.1 DER parser.
 
-use untrusted;
+#[cfg(feature = "cli")]
+use std::fmt::{self, Display, Formatter};
+use untrusted::{Reader, Input};
 
 use {Error, Result};
 
 const CONSTRUCTED: u8 = 1 << 5;
 const CONTEXT_SPECIFIC: u8 = 2 << 6;
 
-#[derive(Clone, Copy, PartialEq)]
+/// ASN.1 Tags
+#[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(u8)]
 pub enum Tag {
+    Eoc = 0x00,
     Boolean = 0x01,
     Integer = 0x02,
     BitString = 0x03,
     OctetString = 0x04,
     Null = 0x05,
-    OID = 0x06,
+    Oid = 0x06,
     Sequence = CONSTRUCTED | 0x10, // 0x30
-    UTCTime = 0x17,
+    UtcTime = 0x17,
     GeneralizedTime = 0x18,
     ContextSpecificConstructed0 = CONTEXT_SPECIFIC | CONSTRUCTED | 0,
     ContextSpecificConstructed1 = CONTEXT_SPECIFIC | CONSTRUCTED | 1,
+    ContextSpecificConstructed2 = CONTEXT_SPECIFIC | CONSTRUCTED | 2,
     ContextSpecificConstructed3 = CONTEXT_SPECIFIC | CONSTRUCTED | 3,
 }
 
+#[cfg(feature = "cli")]
+impl Display for Tag {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        let s = match *self {
+            Tag::Eoc => "EOC",
+            Tag::Boolean => "BOOLEAN",
+            Tag::Integer => "INTEGER",
+            Tag::BitString => "BIT STRING",
+            Tag::OctetString => "OCTET STRING",
+            Tag::Null => "NULL",
+            Tag::Oid => "OBJECT IDENTIFIER",
+            Tag::Sequence => "SEQUENCE",
+            Tag::UtcTime => "UTC TIME",
+            Tag::GeneralizedTime => "GENERALIZED TIME",
+            Tag::ContextSpecificConstructed0 => "CONTEXT SPECIFIC CONSTRUCTED 0",
+            Tag::ContextSpecificConstructed1 => "CONTEXT SPECIFIC CONSTRUCTED 1",
+            Tag::ContextSpecificConstructed2 => "CONTEXT SPECIFIC CONSTRUCTED 2",
+            Tag::ContextSpecificConstructed3 => "CONTEXT SPECIFIC CONSTRUCTED 3",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+#[cfg(feature = "cli")]
+impl Tag {
+    pub fn from_byte(byte: u8) -> Result<Self> {
+        match byte {
+            x if x == Tag::Eoc as u8 => Ok(Tag::Eoc),
+            x if x == Tag::Boolean as u8 => Ok(Tag::Boolean),
+            x if x == Tag::Integer as u8 => Ok(Tag::Integer),
+            x if x == Tag::BitString as u8 => Ok(Tag::BitString),
+            x if x == Tag::OctetString as u8 => Ok(Tag::OctetString),
+            x if x == Tag::Null as u8 => Ok(Tag::Null),
+            x if x == Tag::Oid as u8 => Ok(Tag::Oid),
+            x if x == Tag::Sequence as u8 => Ok(Tag::Sequence),
+            x if x == Tag::UtcTime as u8 => Ok(Tag::UtcTime),
+            x if x == Tag::GeneralizedTime as u8 => Ok(Tag::GeneralizedTime),
+            x if x == Tag::ContextSpecificConstructed0 as u8 => Ok(Tag::ContextSpecificConstructed0),
+            x if x == Tag::ContextSpecificConstructed1 as u8 => Ok(Tag::ContextSpecificConstructed1),
+            x if x == Tag::ContextSpecificConstructed2 as u8 => Ok(Tag::ContextSpecificConstructed2),
+            x if x == Tag::ContextSpecificConstructed3 as u8 => Ok(Tag::ContextSpecificConstructed3),
+            _ => Err(Error::UnknownTag)
+        }
+    }
+}
+
+
+/// Read a tag and return it's value. Errors when the expect and actual tag do not match.
 pub fn expect_tag_and_get_value<'a>(
-    input: &mut untrusted::Reader<'a>,
+    input: &mut Reader<'a>,
     tag: Tag,
-) -> Result<untrusted::Input<'a>> {
+) -> Result<Input<'a>> {
     let (actual_tag, inner) = read_tag_and_get_value(input)?;
-    if (tag as usize) != (actual_tag as usize) {
+    if tag as u8 != actual_tag {
         return Err(Error::WrongTag);
     }
     Ok(inner)
 }
 
+/// Read the next tag, and return it and its value.
 pub fn read_tag_and_get_value<'a>(
-    input: &mut untrusted::Reader<'a>,
-) -> Result<(u8, untrusted::Input<'a>)> {
+    input: &mut Reader<'a>,
+) -> Result<(u8, Input<'a>)> {
     let tag = input.read_byte()?;
     if (tag & 0x1F) == 0x1F {
         return Err(Error::HighTagNumberForm);
@@ -87,9 +141,32 @@ pub fn read_tag_and_get_value<'a>(
     Ok((tag, inner))
 }
 
+pub fn read_null<'a>(input: &mut Reader<'a>) -> Result<()> {
+    expect_tag_and_get_value(input, Tag::Null)
+        .map(|_| ())
+}
+
+/// Read a `BIT STRING` with leading byte `0x00` signifying no unused bits.
+///
+/// ```
+/// extern crate derp;
+/// extern crate untrusted;
+///
+/// use untrusted::Input;
+///
+/// const BIT_STRING: &'static [u8] = &[0x03, 0x04, 0x00, 0x01, 0x02, 0x03];
+///
+/// fn main() {
+///     let input = Input::from(BIT_STRING);
+///     let bits = input.read_all(derp::Error::Read, |input| {
+///         derp::bit_string_with_no_unused_bits(input)
+///     }).unwrap();
+///     assert_eq!(bits, Input::from(&[0x01, 0x02, 0x03]));
+/// }
+/// ```
 pub fn bit_string_with_no_unused_bits<'a>(
-    input: &mut untrusted::Reader<'a>,
-) -> Result<untrusted::Input<'a>> {
+    input: &mut Reader<'a>,
+) -> Result<Input<'a>> {
     nested(input, Tag::BitString, |value| {
         let unused_bits_at_end = value.read_byte()?;
         if unused_bits_at_end != 0 {
@@ -99,23 +176,59 @@ pub fn bit_string_with_no_unused_bits<'a>(
     })
 }
 
+/// Return the value of the given tag and apply a decoding function to it.
+///
+/// ```
+/// extern crate derp;
+/// extern crate untrusted;
+///
+/// use derp::Tag;
+/// use untrusted::Input;
+///
+/// const NESTED: &'static [u8] = &[
+///     0x30, 0x14,                                 // seq
+///         0x30, 0x0c,                             // seq
+///             0x02, 0x04, 0x0a, 0x0b, 0x0c, 0x0d, // x
+///             0x02, 0x04, 0x1a, 0x1b, 0x1c, 0x1d, // y
+///         0x02, 0x04, 0x01, 0x02, 0x03, 0x04,     // z
+/// ];
+/// fn main () {
+///     let input = Input::from(NESTED);
+///     let (x, y, z) = input.read_all(derp::Error::Read, |input| {
+///         derp::nested(input, Tag::Sequence, |input| {
+///             let (x, y) = derp::nested(input, Tag::Sequence, |input| {
+///                 let x = derp::positive_integer(input)?;
+///                 let y = derp::positive_integer(input)?;
+///                 Ok((x, y))
+///             })?;
+///             let z = derp::positive_integer(input)?;
+///             Ok((x, y, z))
+///         })
+///     }).unwrap();
+///
+///     assert_eq!(x, Input::from(&[0x0a, 0x0b, 0x0c, 0x0d]));
+///     assert_eq!(y, Input::from(&[0x1a, 0x1b, 0x1c, 0x1d]));
+///     assert_eq!(z, Input::from(&[0x01, 0x02, 0x03, 0x04]));
+/// }
+/// ```
 // TODO: investigate taking decoder as a reference to reduce generated code
 // size.
-pub fn nested<'a, F, R>(input: &mut untrusted::Reader<'a>, tag: Tag, decoder: F) -> Result<R>
+pub fn nested<'a, F, R>(input: &mut Reader<'a>, tag: Tag, decoder: F) -> Result<R>
 where
-    F: FnOnce(&mut untrusted::Reader<'a>) -> Result<R>,
+    F: FnOnce(&mut Reader<'a>) -> Result<R>,
 {
     let inner = expect_tag_and_get_value(input, tag)?;
     inner.read_all(Error::Read, decoder)
 }
 
-fn nonnegative_integer<'a>(
-    input: &mut untrusted::Reader<'a>,
+/// Return a non-negative integer.
+pub fn nonnegative_integer<'a>(
+    input: &mut Reader<'a>,
     min_value: u8,
-) -> Result<untrusted::Input<'a>> {
+) -> Result<Input<'a>> {
     // Verify that |input|, which has had any leading zero stripped off, is the
     // encoding of a value of at least |min_value|.
-    fn check_minimum(input: untrusted::Input, min_value: u8) -> Result<()> {
+    fn check_minimum(input: Input, min_value: u8) -> Result<()> {
         input.read_all(Error::Read, |input| {
             let first_byte = input.read_byte()?;
             if input.at_end() && first_byte < min_value {
@@ -170,7 +283,7 @@ fn nonnegative_integer<'a>(
 /// Parse as integer with a value in the in the range [0, 255], returning its
 /// numeric value. This is typically used for parsing version numbers.
 #[inline]
-pub fn small_nonnegative_integer(input: &mut untrusted::Reader) -> Result<u8> {
+pub fn small_nonnegative_integer(input: &mut Reader) -> Result<u8> {
     let value = nonnegative_integer(input, 0)?;
     value.read_all(Error::Read, |input| {
         let r = input.read_byte()?;
@@ -181,29 +294,39 @@ pub fn small_nonnegative_integer(input: &mut untrusted::Reader) -> Result<u8> {
 /// Parses a positive DER integer, returning the big-endian-encoded value, sans
 /// any leading zero byte.
 #[inline]
-pub fn positive_integer<'a>(input: &mut untrusted::Reader<'a>) -> Result<untrusted::Input<'a>> {
+pub fn positive_integer<'a>(input: &mut Reader<'a>) -> Result<Input<'a>> {
     nonnegative_integer(input, 1)
+}
+
+/// Parse a boolean value.
+#[inline]
+pub fn boolean<'a>(input: &mut Reader<'a>) -> Result<bool> {
+    let value = expect_tag_and_get_value(input, Tag::Boolean)?;
+    match value.as_slice_less_safe() {
+        x if x == &[0x00] => Ok(false),
+        x if x == &[0x01] => Ok(true),
+        _ => Err(Error::BadBooleanValue),
+    }
 }
 
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use untrusted;
 
     fn with_good_i<F, R>(value: &[u8], f: F)
     where
-        F: FnOnce(&mut untrusted::Reader) -> Result<R>,
+        F: FnOnce(&mut Reader) -> Result<R>,
     {
-        let r = untrusted::Input::from(value).read_all(Error::Read, f);
+        let r = Input::from(value).read_all(Error::Read, f);
         assert!(r.is_ok());
     }
 
     fn with_bad_i<F, R>(value: &[u8], f: F)
     where
-        F: FnOnce(&mut untrusted::Reader) -> Result<R>,
+        F: FnOnce(&mut Reader) -> Result<R>,
     {
-        let r = untrusted::Input::from(value).read_all(Error::Read, f);
+        let r = Input::from(value).read_all(Error::Read, f);
         assert!(r.is_err());
     }
 
@@ -280,7 +403,7 @@ mod tests {
                 let test_out = [test_out];
                 assert_eq!(
                     positive_integer(input)?,
-                    untrusted::Input::from(&test_out[..])
+                    Input::from(&test_out[..])
                 );
                 Ok(())
             });

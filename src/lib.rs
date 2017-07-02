@@ -1,12 +1,69 @@
+//! DER Parser (and Writer)
+//!
+//! ```
+//! extern crate derp;
+//! extern crate untrusted;
+//!
+//! use derp::{Tag, Der};
+//! use untrusted::Input;
+//!
+//! const MY_DATA: &'static [u8] = &[
+//!     0x30, 0x18,                                             // sequence
+//!         0x05, 0x00,                                         // null
+//!         0x30, 0x0e,                                         // sequence
+//!             0x02, 0x06, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, // x
+//!             0x02, 0x04, 0x0a, 0x0b, 0x0c, 0x0d,             // y
+//!         0x03, 0x04, 0x00, 0xff, 0xff, 0xff,                 // bits
+//! ];
+//!
+//! fn main() {
+//!     let input = Input::from(MY_DATA);
+//!     let (x, y, bits) = input.read_all(derp::Error::Read, |input| {
+//!         derp::nested(input, Tag::Sequence, |input| {
+//!             derp::read_null(input)?;
+//!             let (x, y) = derp::nested(input, Tag::Sequence, |input| {
+//!                 let x = derp::positive_integer(input)?;
+//!                 let y = derp::positive_integer(input)?;
+//!                 Ok((x, y))
+//!             })?;
+//!             let bits = derp::bit_string_with_no_unused_bits(input)?;
+//!             Ok((x, y, bits))
+//!         })
+//!     }).unwrap();
+//!
+//!     assert_eq!(x, Input::from(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06]));
+//!     assert_eq!(y, Input::from(&[0x0a, 0x0b, 0x0c, 0x0d]));
+//!     assert_eq!(bits, Input::from(&[0xff, 0xff, 0xff]));
+//!
+//!     let mut buf = Vec::new();
+//!     {
+//!         let mut der = Der::new(&mut buf);
+//!         der.write_sequence(|der| {
+//!             der.write_null()?;
+//!             der.write_sequence(|der| {
+//!                 der.write_integer(x)?;
+//!                 der.write_integer(y)
+//!             })?;
+//!             der.write_bit_string(0, |der| {
+//!                 der.write_raw(bits)
+//!             })
+//!         }).unwrap();
+//!     }
+//!
+//!     assert_eq!(buf.as_slice(), MY_DATA);
+//! }
+//! ```
 extern crate untrusted;
 
-use std::io::{self, Write};
-
 mod der;
+mod writer;
 
 pub use der::*;
+pub use writer::*;
 
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Error {
+    BadBooleanValue,
     LeadingZero,
     LessThanMinimum,
     LongLengthNotSupported,
@@ -17,6 +74,7 @@ pub enum Error {
     NonZeroUnusedBits,
     Read,
     UnexpectedEnd,
+    UnknownTag,
     WrongTag,
 }
 
@@ -26,123 +84,11 @@ impl From<untrusted::EndOfInput> for Error {
     }
 }
 
-impl From<io::Error> for Error {
-    fn from(_: io::Error) -> Error {
+impl From<::std::io::Error> for Error {
+    fn from(_: ::std::io::Error) -> Error {
         Error::Io
     }
 }
 
+/// Alias for `Result<T, Error>`
 pub type Result<T> = ::std::result::Result<T, Error>;
-
-pub struct Der<'a, W: Write + 'a> {
-    writer: &'a mut W,
-}
-
-impl<'a, W: Write> Der<'a, W> {
-    pub fn new(writer: &'a mut W) -> Self {
-        Der { writer: writer }
-    }
-
-    fn length_of_length(len: usize) -> u8 {
-        let mut i = len;
-        let mut num_bytes = 1;
-
-        while i > 255 {
-            num_bytes += 1;
-            i >>= 8;
-        }
-
-        num_bytes
-    }
-
-    fn write_len(&mut self, len: usize) -> Result<()> {
-        if len >= 128 {
-            let n = Self::length_of_length(len);
-            self.writer.write_all(&[0x80 | n])?;
-
-            for i in (1..n + 1).rev() {
-                self.writer.write_all(&[(len >> ((i - 1) * 8)) as u8])?;
-            }
-        } else {
-            self.writer.write_all(&[len as u8])?;
-        }
-
-        Ok(())
-    }
-
-    pub fn write_null(&mut self) -> Result<()> {
-        Ok(self.writer.write_all(&[Tag::Null as u8, 0])?)
-    }
-
-    pub fn write_element(&mut self, tag: Tag, input: untrusted::Input) -> Result<()> {
-        self.writer.write_all(&[tag as u8])?;
-        let mut buf = Vec::new();
-
-        input.read_all(Error::Read, |read| {
-            while let Ok(byte) = read.read_byte() {
-                buf.push(byte);
-            }
-
-            Ok(())
-        })?;
-
-        self.write_len(buf.len())?;
-
-        Ok(self.writer.write_all(&mut buf)?)
-    }
-
-    pub fn write_integer(&mut self, input: untrusted::Input) -> Result<()> {
-        self.writer.write_all(&[Tag::Integer as u8])?;
-        let mut buf = Vec::new();
-
-        input.read_all(Error::Read, |read| {
-            while let Ok(byte) = read.read_byte() {
-                buf.push(byte);
-            }
-
-            Ok(())
-        })?;
-
-        self.write_len(buf.len())?;
-
-        Ok(self.writer.write_all(&mut buf)?)
-    }
-
-    pub fn write_sequence<F: FnOnce(&mut Der<Vec<u8>>) -> Result<()>>(
-        &mut self,
-        func: F,
-    ) -> Result<()> {
-        self.writer.write_all(&[Tag::Sequence as u8])?;
-        let mut buf = Vec::new();
-
-        {
-            let mut inner = Der::new(&mut buf);
-            func(&mut inner)?;
-        }
-
-        self.write_len(buf.len())?;
-        Ok(self.writer.write_all(&buf)?)
-    }
-
-    pub fn write_raw(&mut self, input: untrusted::Input) -> Result<()> {
-        Ok(self.writer.write_all(input.as_slice_less_safe())?)
-    }
-
-    pub fn write_bit_string<F: FnOnce(&mut Der<Vec<u8>>) -> Result<()>>(
-        &mut self,
-        func: F,
-    ) -> Result<()> {
-        self.writer.write_all(&[Tag::BitString as u8])?;
-        let mut buf = Vec::new();
-        // push 0x00 byte to say "no unused bits"
-        buf.push(0x00);
-
-        {
-            let mut inner = Der::new(&mut buf);
-            func(&mut inner)?;
-        }
-
-        self.write_len(buf.len())?;
-        Ok(self.writer.write_all(&buf)?)
-    }
-}
