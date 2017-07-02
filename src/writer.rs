@@ -2,9 +2,9 @@ use std::io::Write;
 use untrusted;
 
 use {Error, Result};
-use der::Tag;
+use der::{self, Tag};
 
-/// Helper for writing DER without having to encode tags and length manually.
+/// Helper for writing DER that automattically encoes tags and content lengths.
 pub struct Der<'a, W: Write + 'a> {
     writer: &'a mut W,
 }
@@ -15,21 +15,9 @@ impl<'a, W: Write> Der<'a, W> {
         Der { writer: writer }
     }
 
-    fn length_of_length(len: usize) -> u8 {
-        let mut i = len;
-        let mut num_bytes = 1;
-
-        while i > 255 {
-            num_bytes += 1;
-            i >>= 8;
-        }
-
-        num_bytes
-    }
-
     fn write_len(&mut self, len: usize) -> Result<()> {
         if len >= 128 {
-            let n = Self::length_of_length(len);
+            let n = der::length_of_length(len);
             self.writer.write_all(&[0x80 | n])?;
 
             for i in (1..n + 1).rev() {

@@ -49,6 +49,14 @@ fn parse_to_bytes(bytes: &[u8]) -> Vec<u8> {
     data_encoding::BASE64.decode(bytes)
         .map_err(|_| ())
         .or_else(|_| {
+            data_encoding::HEXUPPER.decode(bytes)
+                .map_err(|_| ())
+        })
+        .or_else(|_| {
+            data_encoding::HEXLOWER.decode(bytes)
+                .map_err(|_| ())
+        })
+        .or_else(|_| {
             pem::parse(bytes)
                 .map(|p| p.contents)
                 .map_err(|_| ())
@@ -67,6 +75,28 @@ fn make_printable_string<'a>(input: &mut Reader<'a>) -> Result<String> {
             .map(|l| format!("  {}\n", l))
             .collect::<String>();
         return Ok(format!("{}\n{}", Tag::Sequence, out))
+    }
+
+    if input.peek(Tag::BitString as u8) {
+        let out = derp::nested(input, Tag::BitString, make_printable_string)
+            .map(|s| {
+                s.lines()
+                    .map(|l| format!("  {}\n", l))
+                    .collect::<String>()
+            })
+            .unwrap_or_else(|_| "".into());
+        return Ok(format!("{}\n{}", Tag::BitString, out))
+    }
+
+    if input.peek(Tag::OctetString as u8) {
+        let out = derp::nested(input, Tag::OctetString, make_printable_string)
+            .map(|s| {
+                s.lines()
+                    .map(|l| format!("  {}\n", l))
+                    .collect::<String>()
+            })
+            .unwrap_or_else(|_| "".into());
+        return Ok(format!("{}\n{}", Tag::OctetString, out))
     }
 
     let mut out = String::new();

@@ -309,6 +309,18 @@ pub fn boolean<'a>(input: &mut Reader<'a>) -> Result<bool> {
     }
 }
 
+/// For a given length, how many bytes are required to represent it in DER form.
+pub fn length_of_length(len: usize) -> u8 {
+    let mut i = len;
+    let mut num_bytes = 1;
+
+    while i > 255 {
+        num_bytes += 1;
+        i >>= 8;
+    }
+
+    num_bytes
+}
 
 #[cfg(test)]
 mod tests {
