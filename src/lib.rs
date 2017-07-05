@@ -24,16 +24,16 @@
 //!             let (x, y) = derp::nested(input, Tag::Sequence, |input| {
 //!                 let x = derp::positive_integer(input)?;
 //!                 let y = derp::positive_integer(input)?;
-//!                 Ok((x, y))
+//!                 Ok((x.as_slice_less_safe(), y.as_slice_less_safe()))
 //!             })?;
 //!             let bits = derp::bit_string_with_no_unused_bits(input)?;
-//!             Ok((x, y, bits))
+//!             Ok((x, y, bits.as_slice_less_safe()))
 //!         })
 //!     }).unwrap();
 //!
-//!     assert_eq!(x, Input::from(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06]));
-//!     assert_eq!(y, Input::from(&[0x0a, 0x0b, 0x0c, 0x0d]));
-//!     assert_eq!(bits, Input::from(&[0xff, 0xff, 0xff]));
+//!     assert_eq!(x, &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
+//!     assert_eq!(y, &[0x0a, 0x0b, 0x0c, 0x0d]);
+//!     assert_eq!(bits, &[0xff, 0xff, 0xff]);
 //!
 //!     let mut buf = Vec::new();
 //!     {
