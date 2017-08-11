@@ -55,6 +55,8 @@
 //! ```
 extern crate untrusted;
 
+use std::fmt::{self, Display};
+
 mod der;
 mod writer;
 
@@ -77,6 +79,48 @@ pub enum Error {
     UnknownTag,
     WrongTag,
     WrongValue,
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let s = match *self {
+            Error::BadBooleanValue => "bad boolean value",
+            Error::LeadingZero => "leading zero",
+            Error::LessThanMinimum => "less than minimum",
+            Error::LongLengthNotSupported => "long length not supported",
+            Error::HighTagNumberForm => "high tag number form",
+            Error::Io => "I/O",
+            Error::NegativeValue => "negative value",
+            Error::NonCanonical => "non-canonical",
+            Error::NonZeroUnusedBits => "non-zero unused bits",
+            Error::Read => "read",
+            Error::UnexpectedEnd => "unexpected end",
+            Error::UnknownTag => "unknown tag",
+            Error::WrongTag => "wrong tag",
+            Error::WrongValue => "wrong value",
+        };
+        s.fmt(f)
+    }
+}
+impl ::std::error::Error for Error {
+    fn description(&self) -> &str {
+        match *self {
+            Error::BadBooleanValue => "bad boolean value",
+            Error::LeadingZero => "leading zero",
+            Error::LessThanMinimum => "less than minimum",
+            Error::LongLengthNotSupported => "long length not supported",
+            Error::HighTagNumberForm => "high tag number form",
+            Error::Io => "I/O",
+            Error::NegativeValue => "negative value",
+            Error::NonCanonical => "non-canonical",
+            Error::NonZeroUnusedBits => "non-zero unused bits",
+            Error::Read => "read",
+            Error::UnexpectedEnd => "unexpected end",
+            Error::UnknownTag => "unknown tag",
+            Error::WrongTag => "wrong tag",
+            Error::WrongValue => "wrong value",
+        }
+    }
 }
 
 impl From<untrusted::EndOfInput> for Error {
