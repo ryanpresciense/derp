@@ -38,15 +38,13 @@
 //!     let mut buf = Vec::new();
 //!     {
 //!         let mut der = Der::new(&mut buf);
-//!         der.write_sequence(|der| {
-//!             der.write_null()?;
-//!             der.write_sequence(|der| {
-//!                 der.write_integer(x)?;
-//!                 der.write_integer(y)
+//!         der.sequence(|der| {
+//!             der.null()?;
+//!             der.sequence(|der| {
+//!                 der.integer(x)?;
+//!                 der.integer(y)
 //!             })?;
-//!             der.write_bit_string(0, |der| {
-//!                 der.write_raw(bits)
-//!             })
+//!             der.bit_string(0, bits)
 //!         }).unwrap();
 //!     }
 //!

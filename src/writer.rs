@@ -30,12 +30,12 @@ impl<'a, W: Write> Der<'a, W> {
     }
 
     /// Write a `NULL` tag.
-    pub fn write_null(&mut self) -> Result<()> {
+    pub fn null(&mut self) -> Result<()> {
         Ok(self.writer.write_all(&[Tag::Null as u8, 0])?)
     }
 
     /// Write an arbitrary element.
-    pub fn write_element(&mut self, tag: Tag, input: &[u8]) -> Result<()> {
+    pub fn element(&mut self, tag: Tag, input: &[u8]) -> Result<()> {
         self.writer.write_all(&[tag as u8])?;
         self.write_len(input.len())?;
         self.writer.write_all(input)?;
@@ -43,7 +43,7 @@ impl<'a, W: Write> Der<'a, W> {
     }
 
     /// Write the given input as an integer.
-    pub fn write_integer(&mut self, input: &[u8]) -> Result<()> {
+    pub fn integer(&mut self, input: &[u8]) -> Result<()> {
         self.writer.write_all(&[Tag::Integer as u8])?;
         self.write_len(input.len())?;
         self.writer.write_all(input)?;
@@ -51,7 +51,7 @@ impl<'a, W: Write> Der<'a, W> {
     }
 
     /// Write the given input as a positive integer.
-    pub fn write_positive_integer(&mut self, input: &[u8]) -> Result<()> {
+    pub fn positive_integer(&mut self, input: &[u8]) -> Result<()> {
         self.writer.write_all(&[Tag::Integer as u8])?;
 
         let push_zero = if input.len() > 0 {
@@ -70,10 +70,11 @@ impl<'a, W: Write> Der<'a, W> {
         Ok(())
     }
 
-    /// Write a `SEQUENCE` by passing in a handling function that writes to an intermediate `Vec`
-    /// before writing the whole sequence to `self`.
-    pub fn write_sequence<F: FnOnce(&mut Der<Vec<u8>>) -> Result<()>>(
+    /// Write a nested structure by passing in a handling function that writes to an intermediate
+    /// `Vec` before writing the whole sequence to `self`.
+    pub fn nested<F: FnOnce(&mut Der<Vec<u8>>) -> Result<()>>(
         &mut self,
+        tag: Tag,
         func: F,
     ) -> Result<()> {
         let mut buf = Vec::new();
@@ -83,13 +84,22 @@ impl<'a, W: Write> Der<'a, W> {
             func(&mut inner)?;
         }
 
-        self.writer.write_all(&[Tag::Sequence as u8])?;
+        self.writer.write_all(&[tag as u8])?;
         self.write_len(buf.len())?;
         Ok(self.writer.write_all(&buf)?)
     }
 
+    /// Write a `SEQUENCE` by passing in a handling function that writes to an intermediate `Vec`
+    /// before writing the whole sequence to `self`.
+    pub fn sequence<F: FnOnce(&mut Der<Vec<u8>>) -> Result<()>>(
+        &mut self,
+        func: F,
+    ) -> Result<()> {
+        self.nested(Tag::Sequence, func)
+    }
+
     /// Write an `OBJECT IDENTIFIER`.
-    pub fn write_oid(&mut self, input: &[u8]) -> Result<()> {
+    pub fn _oid(&mut self, input: &[u8]) -> Result<()> {
         self.writer.write_all(&[Tag::Oid as u8])?;
         self.write_len(input.len())?;
         self.writer.write_all(&input)?;
@@ -98,46 +108,31 @@ impl<'a, W: Write> Der<'a, W> {
 
     /// Write raw bytes to `self`. This does not calculate length or apply. This should only be used
     /// when you know you are dealing with bytes that are already DER encoded.
-    pub fn write_raw(&mut self, input: &[u8]) -> Result<()> {
+    pub fn raw(&mut self, input: &[u8]) -> Result<()> {
         Ok(self.writer.write_all(input)?)
     }
 
-    /// Write a `BIT STRING` by passing in a handling function that writes to an intermediate `Vec`
-    /// before writing the whole sequence to `self`.
-    pub fn write_bit_string<F: FnOnce(&mut Der<Vec<u8>>) -> Result<()>>(
+    /// Write a `BIT STRING`.
+    pub fn bit_string(
         &mut self,
         unused_bits: u8,
-        func: F,
+        bit_string: &[u8],
     ) -> Result<()> {
-        let mut buf = Vec::new();
-        buf.push(unused_bits);
-
-        {
-            let mut inner = Der::new(&mut buf);
-            func(&mut inner)?;
-        }
-
         self.writer.write_all(&[Tag::BitString as u8])?;
-        self.write_len(buf.len())?;
-        Ok(self.writer.write_all(&buf)?)
+        self.write_len(bit_string.len() + 1)?;
+        self.writer.write_all(&[unused_bits])?;
+        self.writer.write_all(&bit_string)?;
+        Ok(())
     }
 
-    /// Write a `OCTET STRING` by passing in a handling function that writes to an intermediate `Vec`
-    /// before writing the whole sequence to `self`.
-    pub fn write_octet_string<F: FnOnce(&mut Der<Vec<u8>>) -> Result<()>>(
+    /// Write an `OCTET STRING`.
+    pub fn octet_string(
         &mut self,
-        func: F,
+        octet_string: &[u8],
     ) -> Result<()> {
-        let mut buf = Vec::new();
-
-        {
-            let mut inner = Der::new(&mut buf);
-            func(&mut inner)?;
-        }
-
         self.writer.write_all(&[Tag::OctetString as u8])?;
-        self.write_len(buf.len())?;
-        Ok(self.writer.write_all(&buf)?)
+        self.writer.write_all(&octet_string)?;
+        Ok(())
     }
 }
 
@@ -163,9 +158,9 @@ mod test {
         let mut buf = Vec::new();
         {
             let mut der = Der::new(&mut buf);
-            der.write_sequence(|der| {
-                der.write_positive_integer(n)?;
-                der.write_positive_integer(e)
+            der.sequence(|der| {
+                der.positive_integer(n)?;
+                der.positive_integer(e)
             }).unwrap();
         }
 
