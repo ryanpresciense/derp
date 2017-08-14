@@ -88,6 +88,14 @@ impl<'a, W: Write> Der<'a, W> {
         Ok(self.writer.write_all(&buf)?)
     }
 
+    /// Write an `OBJECT IDENTIFIER`.
+    pub fn write_oid(&mut self, input: &[u8]) -> Result<()> {
+        self.writer.write_all(&[Tag::Oid as u8])?;
+        self.write_len(input.len())?;
+        self.writer.write_all(&input)?;
+        Ok(())
+    }
+
     /// Write raw bytes to `self`. This does not calculate length or apply. This should only be used
     /// when you know you are dealing with bytes that are already DER encoded.
     pub fn write_raw(&mut self, input: &[u8]) -> Result<()> {
