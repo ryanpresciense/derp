@@ -121,6 +121,24 @@ impl<'a, W: Write> Der<'a, W> {
         self.write_len(buf.len())?;
         Ok(self.writer.write_all(&buf)?)
     }
+
+    /// Write a `OCTET STRING` by passing in a handling function that writes to an intermediate `Vec`
+    /// before writing the whole sequence to `self`.
+    pub fn write_octet_string<F: FnOnce(&mut Der<Vec<u8>>) -> Result<()>>(
+        &mut self,
+        func: F,
+    ) -> Result<()> {
+        let mut buf = Vec::new();
+
+        {
+            let mut inner = Der::new(&mut buf);
+            func(&mut inner)?;
+        }
+
+        self.writer.write_all(&[Tag::OctetString as u8])?;
+        self.write_len(buf.len())?;
+        Ok(self.writer.write_all(&buf)?)
+    }
 }
 
 #[cfg(test)]
