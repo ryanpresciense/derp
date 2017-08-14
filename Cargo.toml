@@ -1,6 +1,6 @@
 [package]
 name = "derp"
-version = "0.0.8"
+version = "0.0.9"
 authors = ["heartsucker <heartsucker@autistici.org>"]
 description = "DER Parser (and Writer)"
 homepage = "https://github.com/heartsucker/derp"

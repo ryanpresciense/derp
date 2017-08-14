@@ -99,7 +99,7 @@ impl<'a, W: Write> Der<'a, W> {
     }
 
     /// Write an `OBJECT IDENTIFIER`.
-    pub fn _oid(&mut self, input: &[u8]) -> Result<()> {
+    pub fn oid(&mut self, input: &[u8]) -> Result<()> {
         self.writer.write_all(&[Tag::Oid as u8])?;
         self.write_len(input.len())?;
         self.writer.write_all(&input)?;
