@@ -131,6 +131,7 @@ impl<'a, W: Write> Der<'a, W> {
         octet_string: &[u8],
     ) -> Result<()> {
         self.writer.write_all(&[Tag::OctetString as u8])?;
+        self.write_len(octet_string.len())?;
         self.writer.write_all(&octet_string)?;
         Ok(())
     }
@@ -145,7 +146,7 @@ mod test {
     static RSA_2048_PKCS1: &'static [u8] = include_bytes!("../tests/rsa-2048.pkcs1.der");
 
     #[test]
-    fn test_write_pkcs1() {
+    fn write_pkcs1() {
         let input = Input::from(RSA_2048_PKCS1);
         let (n, e) = input.read_all(Error::Read, |input| {
             der::nested(input, Tag::Sequence, |input| {
@@ -165,5 +166,24 @@ mod test {
         }
 
         assert_eq!(buf.as_slice(), RSA_2048_PKCS1);
+    }
+
+    #[test]
+    fn write_octet_string() {
+        let mut buf = Vec::new();
+        {
+            let mut der = Der::new(&mut buf);
+            der.octet_string(&[]).unwrap();
+        }
+
+        assert_eq!(&buf, &[0x04, 0x00]);
+
+        let mut buf = Vec::new();
+        {
+            let mut der = Der::new(&mut buf);
+            der.octet_string(&[0x0a, 0x0b, 0x0c]).unwrap();
+        }
+
+        assert_eq!(&buf, &[0x04, 0x03, 0x0a, 0x0b, 0x0c]);
     }
 }
